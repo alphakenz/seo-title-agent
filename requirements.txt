@@ -1,10 +1,7 @@
 fastapi
 uvicorn[standard]
 pydantic
-openai
+google-generativeai
 python-multipart
 httpx
-pytest
-pytest-asyncio
-pytest-cov
 python-dotenv
