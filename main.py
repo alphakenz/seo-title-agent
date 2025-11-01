@@ -254,7 +254,7 @@ async def telex_webhook(request: TelexRequest):
             "metadata": {
                 "titles_generated": len(titles),
                 "topic": topic,
-                "ai_model": "Google Gemini 1.5 Flash (FREE)",
+                "ai_model": "Google Gemini 1.5 Flash",
                 "timestamp": datetime.utcnow().isoformat()
             }
         }
@@ -276,7 +276,7 @@ async def generate_titles_api(topic: str, keywords: Optional[str] = None):
         return AgentResponse(
             success=True,
             titles=titles,
-            message=f"Successfully generated {len(titles)} SEO titles using Google Gemini 1.5 Flash (FREE)",
+            message=f"Successfully generated {len(titles)} SEO titles using Google Gemini 1.5 Flash",
             timestamp=datetime.utcnow().isoformat()
         )
         
@@ -291,7 +291,7 @@ async def agent_info():
         "name": "SEO Title Generator",
         "description": "AI agent that generates 10 SEO-optimized titles with descriptions for any topic",
         "version": "1.0.0",
-        "ai_model": "Google Gemini 1.5 Flash (FREE)",
+        "ai_model": "Google Gemini 1.5 Flash",
         "api_cost": "FREE - No charges",
         "capabilities": [
             "Generate SEO-optimized titles",
