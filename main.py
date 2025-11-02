@@ -162,19 +162,22 @@ Make sure all titles are unique, engaging, and optimized for search engines. Ret
 def format_titles_for_telex(titles: List[SEOTitle]) -> str:
     """Format SEO titles for display in Telex chat."""
     
-    message = "🎯 **SEO Title Generator Results**\n\n"
-    message += f"Generated {len(titles)} optimized titles:\n\n"
+    message = "✅ **Generation Complete!**\n\n"
+    message += "🎯 **Your SEO-Optimized Titles:**\n\n"
     
     for i, title in enumerate(titles, 1):
         message += f"**{i}. {title.title}**\n"
-        message += f"📝 {title.description}\n"
-        message += f"🔤 Length: {title.character_count} chars\n"
-        message += f"🏷️ Keywords: {', '.join(title.keywords)}\n\n"
+        message += f"   📝 {title.description}\n"
+        message += f"   🔤 Length: {title.character_count} chars | "
+        message += f"🏷️ {', '.join(title.keywords[:3])}\n\n"
     
-    message += "\n💡 **Tips:**\n"
-    message += "- Titles are optimized for 50-60 characters\n"
-    message += "- Descriptions fit meta description length (150-160 chars)\n"
-    message += "- Use A/B testing to find the best performer\n"
+    message += "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    message += "💡 **Pro Tips:**\n"
+    message += "• Titles optimized for 50-60 characters (perfect for Google)\n"
+    message += "• Descriptions are 150-160 chars (ideal meta length)\n"
+    message += "• Test multiple titles with A/B testing\n"
+    message += "• Use power words to increase click-through rates\n\n"
+    message += "🚀 Ready to boost your SEO rankings!"
     
     return message
 
@@ -253,12 +256,19 @@ async def telex_webhook(request: Request):
         # Parse the message to extract topic and keywords
         if not any(trigger in message_content.lower() for trigger in ['seo', 'title', 'generate']):
             return {
-                "response": "👋 Hi! I'm the SEO Title Generator Agent (powered by FREE Google Gemini 1.5).\n\n"
-                           "I can generate 10 SEO-optimized titles with descriptions for any topic.\n\n"
-                           "**Usage:**\n"
-                           "- `generate seo titles for: your topic here`\n"
-                           "- `seo: your topic | keywords: keyword1, keyword2`\n\n"
-                           "Example: `generate seo titles for: sustainable fashion trends 2025`"
+                "response": "👋 **Welcome! I'm SEO Muse, your AI SEO expert.**\n\n"
+                           "🎯 I specialize in creating SEO-optimized titles that rank and convert!\n\n"
+                           "**What I can do for you:**\n"
+                           "✨ Generate 10 unique, SEO-optimized titles\n"
+                           "📝 Create compelling meta descriptions\n"
+                           "🔑 Extract powerful keywords\n"
+                           "📊 Optimize for search engines\n\n"
+                           "**How to use me:**\n"
+                           "• `generate seo titles for: your topic here`\n"
+                           "• `seo: your topic | keywords: keyword1, keyword2`\n\n"
+                           "**Example:**\n"
+                           "`generate seo titles for: sustainable fashion trends 2025`\n\n"
+                           "Ready to boost your SEO? Just tell me your topic! 🚀"
             }
         
         # Extract topic and keywords
@@ -283,11 +293,22 @@ async def telex_webhook(request: Request):
                            "Example: `generate seo titles for: AI in healthcare`"
             }
         
+        # Send immediate acknowledgment with a professional processing message
+        logger.info(f"🎯 Starting SEO title generation for: {topic}")
+        
+        # Create engaging processing message
+        processing_msg = f"🎨 **SEO Muse is working on your request...**\n\n"
+        processing_msg += f"📌 Topic: **{topic}**\n"
+        if keywords:
+            processing_msg += f"🔑 Keywords: {keywords}\n"
+        processing_msg += "\n⏳ Analyzing search trends and crafting optimized titles...\n"
+        processing_msg += "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
         # Generate SEO titles
         titles = generate_seo_titles(topic, keywords)
         
         # Format response for Telex
-        formatted_message = format_titles_for_telex(titles)
+        formatted_message = processing_msg + format_titles_for_telex(titles)
         
         return {
             "response": formatted_message,
