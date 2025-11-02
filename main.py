@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -8,6 +8,7 @@ from datetime import datetime
 import json
 import logging
 from dotenv import load_dotenv
+import asyncio
 
 # Load environment variables from .env file
 load_dotenv()
@@ -104,31 +105,34 @@ def generate_seo_titles(topic: str, keywords: Optional[str] = None) -> List[SEOT
     if not model:
         raise HTTPException(status_code=500, detail="AI model not initialized. Please set GEMINI_API_KEY")
     
-    prompt = f"""Generate 10 SEO-optimized titles with descriptions for the following topic:
-
-Topic: {topic}
-{f'Keywords to include: {keywords}' if keywords else ''}
+    prompt = f"""Generate 10 SEO-optimized titles with descriptions for: {topic}
+{f'Keywords: {keywords}' if keywords else ''}
 
 Requirements:
-1. Each title should be 50-60 characters (optimal for search engines)
-2. Include power words and numbers where appropriate
-3. Make titles click-worthy but accurate
-4. Each description should be 150-160 characters (meta description length)
-5. Descriptions should complement the title and include a call-to-action
-6. Extract 3-5 relevant keywords for each title
+1. Titles: 50-60 characters
+2. Descriptions: 150-160 characters  
+3. Include 3 keywords per title
+4. Make titles click-worthy
 
-Return the response in JSON format as an array of objects with this structure:
-{{
-  "title": "SEO-optimized title here",
-  "description": "Engaging meta description here",
-  "keywords": ["keyword1", "keyword2", "keyword3"]
-}}
+Return ONLY a JSON array (no extra text):
+[{{"title":"...","description":"...","keywords":["...","...","..."]}}]
 
-Make sure all titles are unique, engaging, and optimized for search engines. Return ONLY valid JSON array, no additional text."""
+Be concise and return valid JSON immediately."""
 
     try:
         logger.info(f"Generating titles for topic: {topic}")
-        response = model.generate_content(prompt)
+        
+        # Optimize generation settings for speed
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.GenerationConfig(
+                max_output_tokens=2000,  # Reduced for faster response
+                temperature=0.7,
+                top_p=0.9,
+                top_k=40
+            )
+        )
+        
         content = response.text
         logger.info("✅ Received response from Gemini API")
         
@@ -162,22 +166,14 @@ Make sure all titles are unique, engaging, and optimized for search engines. Ret
 def format_titles_for_telex(titles: List[SEOTitle]) -> str:
     """Format SEO titles for display in Telex chat."""
     
-    message = "✅ **Generation Complete!**\n\n"
-    message += "🎯 **Your SEO-Optimized Titles:**\n\n"
+    message = "✅ **Your 10 SEO-Optimized Titles:**\n\n"
     
     for i, title in enumerate(titles, 1):
         message += f"**{i}. {title.title}**\n"
-        message += f"   📝 {title.description}\n"
-        message += f"   🔤 Length: {title.character_count} chars | "
-        message += f"🏷️ {', '.join(title.keywords[:3])}\n\n"
+        message += f"📝 {title.description}\n"
+        message += f"🏷️ {', '.join(title.keywords[:3])} • {title.character_count} chars\n\n"
     
-    message += "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-    message += "💡 **Pro Tips:**\n"
-    message += "• Titles optimized for 50-60 characters (perfect for Google)\n"
-    message += "• Descriptions are 150-160 chars (ideal meta length)\n"
-    message += "• Test multiple titles with A/B testing\n"
-    message += "• Use power words to increase click-through rates\n\n"
-    message += "🚀 Ready to boost your SEO rankings!"
+    message += "💡 **Tips:** Test multiple titles • Optimize for CTR • A/B test results\n"
     
     return message
 
@@ -296,13 +292,8 @@ async def telex_webhook(request: Request):
         # Send immediate acknowledgment with a professional processing message
         logger.info(f"🎯 Starting SEO title generation for: {topic}")
         
-        # Create engaging processing message
-        processing_msg = f"🎨 **SEO Muse is working on your request...**\n\n"
-        processing_msg += f"📌 Topic: **{topic}**\n"
-        if keywords:
-            processing_msg += f"🔑 Keywords: {keywords}\n"
-        processing_msg += "\n⏳ Analyzing search trends and crafting optimized titles...\n"
-        processing_msg += "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        # Simpler processing message for faster response
+        processing_msg = f"🎨 Generating SEO titles for: **{topic}**\n\n"
         
         # Generate SEO titles
         titles = generate_seo_titles(topic, keywords)
