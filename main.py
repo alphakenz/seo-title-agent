@@ -105,19 +105,26 @@ def generate_seo_titles(topic: str, keywords: Optional[str] = None) -> List[SEOT
     if not model:
         raise HTTPException(status_code=500, detail="AI model not initialized. Please set GEMINI_API_KEY")
     
-    prompt = f"""Generate 10 SEO-optimized titles with descriptions for: {topic}
-{f'Keywords: {keywords}' if keywords else ''}
+    prompt = f"""Generate exactly 10 SEO-optimized titles for: {topic}
+{f'Include these keywords: {keywords}' if keywords else ''}
 
-Requirements:
-1. Titles: 50-60 characters
-2. Descriptions: 150-160 characters  
-3. Include 3 keywords per title
-4. Make titles click-worthy
+CRITICAL: Return ONLY a valid JSON array with NO extra text before or after.
 
-Return ONLY a JSON array (no extra text):
-[{{"title":"...","description":"...","keywords":["...","...","..."]}}]
+Format:
+[
+  {{"title": "50-60 char title", "description": "150-160 char description", "keywords": ["word1", "word2", "word3"]}},
+  ...10 items total
+]
 
-Be concise and return valid JSON immediately."""
+Rules:
+- Use double quotes only
+- No trailing commas
+- Escape quotes inside strings
+- Keep titles under 60 characters
+- Keep descriptions 150-160 characters
+- Provide exactly 3 keywords per title
+
+Return pure JSON only - no explanations, no markdown, no extra text."""
 
     try:
         logger.info(f"Generating titles for topic: {topic}")
@@ -136,15 +143,39 @@ Be concise and return valid JSON immediately."""
         content = response.text
         logger.info("✅ Received response from Gemini API")
         
-        # Extract JSON from response
+        # Clean and extract JSON from response
+        # Remove markdown code blocks if present
+        content = content.replace('```json', '').replace('```', '').strip()
+        
+        # Find JSON array
         start_idx = content.find('[')
         end_idx = content.rfind(']') + 1
         
         if start_idx == -1 or end_idx == 0:
+            logger.error(f"No JSON array found in response: {content[:200]}")
             raise ValueError("No JSON array found in response")
         
         json_content = content[start_idx:end_idx]
-        titles_data = json.loads(json_content)
+        
+        # Try to parse, with fallback for common JSON errors
+        try:
+            titles_data = json.loads(json_content)
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error: {str(e)}")
+            logger.error(f"Problematic JSON: {json_content[:500]}")
+            
+            # Try to fix common JSON issues
+            json_content = json_content.replace("'", '"')  # Replace single quotes
+            json_content = json_content.replace('\n', ' ')  # Remove newlines
+            json_content = json_content.replace('  ', ' ')  # Remove double spaces
+            
+            try:
+                titles_data = json.loads(json_content)
+                logger.info("✅ Fixed JSON and parsed successfully")
+            except json.JSONDecodeError:
+                # If still fails, generate a fallback response
+                logger.error("Could not parse JSON, generating fallback titles")
+                titles_data = generate_fallback_titles(topic, keywords)
         
         # Convert to SEOTitle objects
         seo_titles = []
@@ -295,8 +326,25 @@ async def telex_webhook(request: Request):
         # Simpler processing message for faster response
         processing_msg = f"🎨 Generating SEO titles for: **{topic}**\n\n"
         
-        # Generate SEO titles
-        titles = generate_seo_titles(topic, keywords)
+        # Generate SEO titles with timeout protection
+        try:
+            titles = await asyncio.wait_for(
+                asyncio.to_thread(generate_seo_titles, topic, keywords),
+                timeout=25.0  # 25 second timeout (before Telex times out at 30s)
+            )
+        except asyncio.TimeoutError:
+            logger.error("⏱️ Generation timed out")
+            return {
+                "response": "⏱️ **Request timed out**\n\n"
+                           "The generation is taking longer than expected. This can happen due to:\n"
+                           "• High API load\n"
+                           "• Complex topic analysis\n\n"
+                           "**Try:**\n"
+                           "1. Simplify your topic\n"
+                           "2. Try again in a moment\n"
+                           "3. Remove extra keywords\n\n"
+                           "Example: `generate seo titles for: WordPress SEO`"
+            }
         
         # Format response for Telex
         formatted_message = processing_msg + format_titles_for_telex(titles)
