@@ -200,15 +200,55 @@ async def health_check():
         "ai_client": "connected" if model else "disconnected"
     }
 
+@app.get("/webhook")
+async def webhook_health():
+    """Health check endpoint for webhook - Telex.im checks this first."""
+    return {
+        "status": "ready",
+        "message": "Webhook endpoint is active and ready to receive POST requests",
+        "endpoint": "/webhook",
+        "method": "POST",
+        "agent": "SEO Title Generator",
+        "version": "1.0.0"
+    }
+
 @app.post("/webhook")
-async def telex_webhook(request: TelexRequest):
+async def telex_webhook(request: Request):
     """Main webhook endpoint for Telex.im A2A protocol."""
     
     try:
-        message_content = request.message.content.strip()
-        channel_id = request.message.channel_id
+        # Log raw request for debugging
+        raw_body = await request.body()
+        logger.info(f"📨 Received raw webhook data: {raw_body.decode('utf-8')}")
         
-        logger.info(f"Received message from channel {channel_id}: {message_content}")
+        # Try to parse as TelexRequest
+        try:
+            body_json = await request.json()
+            logger.info(f"📋 Parsed JSON: {json.dumps(body_json, indent=2)}")
+            
+            # Handle different request formats
+            if "message" in body_json:
+                telex_request = TelexRequest(**body_json)
+                message_content = telex_request.message.content.strip()
+                channel_id = telex_request.message.channel_id
+            elif "content" in body_json:
+                # Alternative format
+                message_content = body_json.get("content", "").strip()
+                channel_id = body_json.get("channel_id", "unknown")
+            else:
+                logger.error(f"❌ Unknown request format: {body_json}")
+                return {
+                    "response": "❌ Invalid request format",
+                    "error": "Missing 'message' or 'content' field"
+                }
+                
+        except Exception as parse_error:
+            logger.error(f"❌ Failed to parse request: {str(parse_error)}")
+            return {
+                "response": f"❌ Error parsing request: {str(parse_error)}"
+            }
+        
+        logger.info(f"📝 Processing message from channel {channel_id}: {message_content}")
         
         # Parse the message to extract topic and keywords
         if not any(trigger in message_content.lower() for trigger in ['seo', 'title', 'generate']):
@@ -254,7 +294,7 @@ async def telex_webhook(request: TelexRequest):
             "metadata": {
                 "titles_generated": len(titles),
                 "topic": topic,
-                "ai_model": "Google Gemini 1.5 Flash",
+                "ai_model": "Google Gemini 1.5 Flash (FREE)",
                 "timestamp": datetime.utcnow().isoformat()
             }
         }
@@ -276,7 +316,7 @@ async def generate_titles_api(topic: str, keywords: Optional[str] = None):
         return AgentResponse(
             success=True,
             titles=titles,
-            message=f"Successfully generated {len(titles)} SEO titles using Google Gemini 1.5 Flash",
+            message=f"Successfully generated {len(titles)} SEO titles using Google Gemini 1.5 Flash (FREE)",
             timestamp=datetime.utcnow().isoformat()
         )
         
@@ -291,7 +331,7 @@ async def agent_info():
         "name": "SEO Title Generator",
         "description": "AI agent that generates 10 SEO-optimized titles with descriptions for any topic",
         "version": "1.0.0",
-        "ai_model": "Google Gemini 1.5 Flash",
+        "ai_model": "Google Gemini 1.5 Flash (FREE)",
         "api_cost": "FREE - No charges",
         "capabilities": [
             "Generate SEO-optimized titles",
