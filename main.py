@@ -158,10 +158,10 @@ Requirements:
         response = model.generate_content(
             prompt,
             generation_config=genai.GenerationConfig(
-                max_output_tokens=3000,
+                max_output_tokens=2000,  # Reduced for faster response
                 temperature=0.7,
-                top_p=0.9,
-                top_k=40
+                top_p=0.8,  # Reduced for faster response
+                top_k=20    # Reduced for faster response
             )
         )
         
@@ -306,21 +306,46 @@ async def telex_webhook(request: Request):
     try:
         body = await request.json()
         logger.info(f"📨 Received webhook request")
+        logger.info(f"📦 Request body: {json.dumps(body, indent=2)}")
         
-        # Extract message content (handle different formats)
+        # Extract message content - Handle Telex A2A format
         message_content = ""
         
-        if "message" in body:
+        # Try different Telex message formats
+        if "params" in body and "message" in body["params"]:
+            # A2A JSON-RPC format
+            message_obj = body["params"]["message"]
+            if "parts" in message_obj:
+                # Extract text from parts array
+                for part in message_obj["parts"]:
+                    if part.get("kind") == "text":
+                        message_content = part.get("text", "")
+                        break
+            elif "content" in message_obj:
+                message_content = message_obj.get("content", "")
+        elif "message" in body:
+            # Direct message format
             if isinstance(body["message"], dict):
-                message_content = body["message"].get("content", "")
+                if "parts" in body["message"]:
+                    # A2A format with parts
+                    for part in body["message"]["parts"]:
+                        if part.get("kind") == "text":
+                            message_content = part.get("text", "")
+                            break
+                elif "content" in body["message"]:
+                    message_content = body["message"].get("content", "")
+                elif "text" in body["message"]:
+                    message_content = body["message"].get("text", "")
             elif isinstance(body["message"], str):
                 message_content = body["message"]
         elif "content" in body:
             message_content = body.get("content", "")
+        elif "text" in body:
+            message_content = body.get("text", "")
         else:
-            logger.error("❌ Unknown request format")
+            logger.error(f"❌ Unknown request format: {body.keys()}")
             return {
-                "response": "❌ Invalid request format. Please send a message with 'content' field."
+                "response": "❌ Unable to parse message. Please try again."
             }
         
         message_content = message_content.strip()
@@ -380,17 +405,23 @@ async def telex_webhook(request: Request):
         if keywords:
             logger.info(f"🏷️ With keywords: {keywords}")
         
-        # Generate titles with timeout
+        # Generate titles with timeout (reduced to 20s for Telex compatibility)
         try:
             titles = await asyncio.wait_for(
                 asyncio.to_thread(generate_seo_titles, topic, keywords),
-                timeout=30.0
+                timeout=20.0
             )
         except asyncio.TimeoutError:
             logger.error("⏱️ Generation timed out")
             return {
                 "response": "⏱️ **Request timed out**\n\n"
-                           "The request took too long. Please try a simpler topic or try again in a moment."
+                           "Please try a simpler topic or try again."
+            }
+        except Exception as gen_error:
+            logger.error(f"❌ Generation error: {str(gen_error)}", exc_info=True)
+            return {
+                "response": "❌ **Error generating titles**\n\n"
+                           "Please try again with a different topic."
             }
         
         # Format and return response
