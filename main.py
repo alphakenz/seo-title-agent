@@ -71,11 +71,10 @@ else:
         
         # Try to initialize Gemini model
         preferred_models = [
-            
-            "gemini-2.0-flash",       # best free
-            "gemini-2.0-flash-lite",  # smaller free
-            "gemini-1.5-flash"        # older free
-
+            'gemini-2.0-flash-exp',
+            'gemini-1.5-flash',
+            'gemini-1.5-flash-latest',
+            'gemini-pro'
         ]
         
         model = None
@@ -85,7 +84,10 @@ else:
             try:
                 logger.info(f"🔍 Trying model: {model_name}")
                 test_model = genai.GenerativeModel(model_name)
-                test_response = test_model.generate_content("OK")
+                test_response = test_model.generate_content(
+                    "Say OK",
+                    generation_config=genai.GenerationConfig(max_output_tokens=10)
+                )
                 logger.info(f"✅ Model {model_name} working!")
                 model = test_model
                 working_model_name = model_name
@@ -342,17 +344,23 @@ async def telex_webhook(request: Request):
             message_content = body.get("text", "")
         else:
             logger.error(f"❌ Unknown request format: {body.keys()}")
-            return {
-                "response": "❌ Unable to parse message. Please try again."
-            }
+            error_msg = "❌ Unable to parse message. Please try again."
+            
+            if "jsonrpc" in body and "id" in body:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"response": error_msg}
+                }
+            else:
+                return {"response": error_msg}
         
         message_content = message_content.strip()
         logger.info(f"📝 Processing: {message_content[:100]}")
         
         # Check if it's a help/info request
         if not any(trigger in message_content.lower() for trigger in ['seo', 'title', 'generate', 'create']):
-            return {
-                "response": "👋 **Welcome to SEO Title Generator!**\n\n"
+            help_message = ("👋 **Welcome to SEO Title Generator!**\n\n"
                            "🎯 I create 10 SEO-optimized titles that rank!\n\n"
                            "**How to use:**\n"
                            "• `generate seo titles for: [your topic]`\n"
@@ -360,8 +368,16 @@ async def telex_webhook(request: Request):
                            "**Examples:**\n"
                            "• `generate seo titles for: AI in healthcare`\n"
                            "• `seo: Python programming | keywords: tutorial, beginner, code`\n\n"
-                           "Ready to boost your SEO? Let's go! 🚀"
-            }
+                           "Ready to boost your SEO? Let's go! 🚀")
+            
+            if "jsonrpc" in body and "id" in body:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"response": help_message}
+                }
+            else:
+                return {"response": help_message}
         
         # Extract topic and keywords
         topic = message_content
@@ -394,10 +410,17 @@ async def telex_webhook(request: Request):
         
         # Validate topic
         if not topic or len(topic) < 3:
-            return {
-                "response": "❌ **Please provide a valid topic!**\n\n"
-                           "Example: `generate seo titles for: sustainable fashion`"
-            }
+            error_message = ("❌ **Please provide a valid topic!**\n\n"
+                           "Example: `generate seo titles for: sustainable fashion`")
+            
+            if "jsonrpc" in body and "id" in body:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"response": error_message}
+                }
+            else:
+                return {"response": error_message}
         
         logger.info(f"🎯 Generating titles for: {topic}")
         if keywords:
@@ -411,36 +434,81 @@ async def telex_webhook(request: Request):
             )
         except asyncio.TimeoutError:
             logger.error("⏱️ Generation timed out")
-            return {
-                "response": "⏱️ **Request timed out**\n\n"
-                           "Please try a simpler topic or try again."
-            }
+            timeout_message = ("⏱️ **Request timed out**\n\n"
+                             "Please try a simpler topic or try again.")
+            
+            if "jsonrpc" in body and "id" in body:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"response": timeout_message}
+                }
+            else:
+                return {"response": timeout_message}
         except Exception as gen_error:
             logger.error(f"❌ Generation error: {str(gen_error)}", exc_info=True)
-            return {
-                "response": "❌ **Error generating titles**\n\n"
-                           "Please try again with a different topic."
-            }
+            gen_error_message = ("❌ **Error generating titles**\n\n"
+                               "Please try again with a different topic.")
+            
+            if "jsonrpc" in body and "id" in body:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"response": gen_error_message}
+                }
+            else:
+                return {"response": gen_error_message}
         
         # Format and return response
         formatted_message = format_titles_for_telex(titles)
         
-        return {
-            "response": formatted_message,
-            "metadata": {
-                "titles_generated": len(titles),
-                "topic": topic,
-                "keywords": keywords,
-                "ai_model": "Google Gemini",
-                "timestamp": datetime.utcnow().isoformat() + "Z"
+        # Check if request was JSON-RPC format
+        if "jsonrpc" in body and "id" in body:
+            # Return JSON-RPC response
+            return {
+                "jsonrpc": "2.0",
+                "id": body["id"],
+                "result": {
+                    "response": formatted_message,
+                    "metadata": {
+                        "titles_generated": len(titles),
+                        "topic": topic,
+                        "keywords": keywords,
+                        "ai_model": "Google Gemini",
+                        "timestamp": datetime.utcnow().isoformat() + "Z"
+                    }
+                }
             }
-        }
+        else:
+            # Return simple response
+            return {
+                "response": formatted_message,
+                "metadata": {
+                    "titles_generated": len(titles),
+                    "topic": topic,
+                    "keywords": keywords,
+                    "ai_model": "Google Gemini",
+                    "timestamp": datetime.utcnow().isoformat() + "Z"
+                }
+            }
         
     except Exception as e:
         logger.error(f"❌ Error processing webhook: {str(e)}", exc_info=True)
-        return {
-            "response": "❌ An error occurred while processing your request. Please try again."
-        }
+        
+        # Check if request was JSON-RPC format
+        if "jsonrpc" in body and "id" in body:
+            return {
+                "jsonrpc": "2.0",
+                "id": body["id"],
+                "error": {
+                    "code": -32603,
+                    "message": "Internal error processing request"
+                }
+            }
+        else:
+            return {
+                "response": "❌ An error occurred while processing your request. Please try again."
+            }
 
 @app.post("/generate")
 async def generate_titles_api(request: GenerateRequest):
