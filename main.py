@@ -71,10 +71,11 @@ else:
         
         # Try to initialize Gemini model
         preferred_models = [
-            'gemini-2.0-flash-exp',
-            'gemini-1.5-flash',
-            'gemini-1.5-flash-latest',
-            'gemini-pro'
+            
+            "gemini-2.0-flash",       # best free
+            "gemini-2.0-flash-lite",  # smaller free
+            "gemini-1.5-flash"        # older free
+
         ]
         
         model = None
@@ -84,10 +85,7 @@ else:
             try:
                 logger.info(f"🔍 Trying model: {model_name}")
                 test_model = genai.GenerativeModel(model_name)
-                test_response = test_model.generate_content(
-                    "Say OK",
-                    generation_config=genai.GenerationConfig(max_output_tokens=10)
-                )
+                test_response = test_model.generate_content("OK")
                 logger.info(f"✅ Model {model_name} working!")
                 model = test_model
                 working_model_name = model_name
