@@ -4,9 +4,6 @@ __pycache__/
 *$py.class
 *.so
 .Python
-env/
-venv/
-ENV/
 build/
 develop-eggs/
 dist/
@@ -23,9 +20,14 @@ wheels/
 .installed.cfg
 *.egg
 
-# Environment
-.env
+# Virtual Environment
+venv/
+env/
+ENV/
 .venv
+
+# Environment Variables
+.env
 .env.local
 .env.*.local
 
@@ -35,7 +37,10 @@ wheels/
 *.swp
 *.swo
 *~
+
+# OS
 .DS_Store
+Thumbs.db
 
 # Logs
 *.log
@@ -46,7 +51,5 @@ logs/
 .coverage
 htmlcov/
 
-# Deployment
-.vercel
-.railway
-fly.toml
+# Railway
+.railway/

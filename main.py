@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -15,10 +15,17 @@ import re
 load_dotenv()
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="SEO Title Generator Agent")
+app = FastAPI(
+    title="SEO Title Generator Agent",
+    description="AI-powered SEO title generator for Telex.im",
+    version="1.0.0"
+)
 
 # CORS middleware
 app.add_middleware(
@@ -29,18 +36,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Pydantic models for Telex A2A protocol
-class TelexMessage(BaseModel):
-    id: str
-    content: str
-    sender: dict
-    channel_id: str
-    timestamp: Optional[str] = None
-
-class TelexRequest(BaseModel):
-    message: TelexMessage
-    context: Optional[dict] = None
-
+# Pydantic models
 class SEOTitle(BaseModel):
     title: str
     description: str
@@ -53,55 +49,60 @@ class AgentResponse(BaseModel):
     message: str
     timestamp: str
 
-# Initialize Google Gemini (FREE API)
+class GenerateRequest(BaseModel):
+    topic: str
+    keywords: Optional[str] = None
+
+# Initialize Google Gemini
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    logger.warning("GEMINI_API_KEY not set. Agent will not function properly.")
-    logger.warning("Please set GEMINI_API_KEY in .env file or environment variable")
+DISABLE_AI = os.getenv("DISABLE_AI", "false").lower() in ("1", "true", "yes")
+
+if not GEMINI_API_KEY and not DISABLE_AI:
+    logger.warning("⚠️ GEMINI_API_KEY not set. Agent will use fallback mode.")
     logger.warning("Get FREE API key at: https://makersuite.google.com/app/apikey")
     model = None
 else:
-    logger.info(f"✅ GEMINI_API_KEY loaded successfully (starts with: {GEMINI_API_KEY[:10]}...)")
-    genai.configure(api_key=GEMINI_API_KEY)
-    
-    # Prioritize Flash models (higher free tier limits)
-    preferred_models = [
-        'models/gemini-2.5-flash',
-        'models/gemini-2.0-flash',
-        'models/gemini-flash-latest',
-        'models/gemini-2.5-flash-lite',
-        'models/gemini-2.0-flash-lite'
-    ]
-    
-    model = None
-    working_model_name = None
-    
-    # Try preferred models first
-    for model_name in preferred_models:
-        try:
-            logger.info(f"🔍 Trying model: {model_name}")
-            test_model = genai.GenerativeModel(model_name)
-            test_response = test_model.generate_content("Say OK", 
-                generation_config=genai.GenerationConfig(max_output_tokens=10))
-            logger.info(f"✅ Model {model_name} working!")
-            model = test_model
-            working_model_name = model_name
-            break
-        except Exception as e:
-            if "429" in str(e) or "quota" in str(e).lower():
-                logger.warning(f"⚠️ {model_name} quota exceeded, trying next...")
-            else:
-                logger.warning(f"⚠️ {model_name} failed: {str(e)[:100]}")
-            continue
-    
-    if model:
-        logger.info(f"🎉 Successfully initialized: {working_model_name}")
+    if DISABLE_AI:
+        logger.info("AI generation disabled via DISABLE_AI flag")
+        model = None
     else:
-        logger.error("❌ All preferred models failed. You may need to wait for quota reset.")
-        logger.info("💡 Free tier quotas reset daily. Try again in a few hours.")
+        logger.info("✅ GEMINI_API_KEY loaded successfully")
+        genai.configure(api_key=GEMINI_API_KEY)
+        
+        # Try to initialize Gemini model
+        preferred_models = [
+            'gemini-2.0-flash-exp',
+            'gemini-1.5-flash',
+            'gemini-1.5-flash-latest',
+            'gemini-pro'
+        ]
+        
+        model = None
+        working_model_name = None
+        
+        for model_name in preferred_models:
+            try:
+                logger.info(f"🔍 Trying model: {model_name}")
+                test_model = genai.GenerativeModel(model_name)
+                test_response = test_model.generate_content(
+                    "Say OK",
+                    generation_config=genai.GenerationConfig(max_output_tokens=10)
+                )
+                logger.info(f"✅ Model {model_name} working!")
+                model = test_model
+                working_model_name = model_name
+                break
+            except Exception as e:
+                logger.warning(f"⚠️ {model_name} failed: {str(e)[:100]}")
+                continue
+        
+        if model:
+            logger.info(f"🎉 Successfully initialized: {working_model_name}")
+        else:
+            logger.error("❌ All models failed. Using fallback mode.")
 
 def generate_fallback_titles(topic: str, keywords: Optional[str] = None) -> List[SEOTitle]:
-    """Generate simple fallback titles if AI parsing fails."""
+    """Generate simple fallback titles if AI is unavailable."""
     keyword_list = [k.strip() for k in keywords.split(',')] if keywords else [topic, "guide", "tips"]
     
     base_titles = [
@@ -118,10 +119,10 @@ def generate_fallback_titles(topic: str, keywords: Optional[str] = None) -> List
     ]
     
     seo_titles = []
-    for i, title in enumerate(base_titles):
+    for title in base_titles:
         seo_titles.append(SEOTitle(
             title=title[:60],
-            description=f"Discover proven strategies and expert insights for {topic}. Get started today and see results!",
+            description=f"Discover proven strategies and expert insights for {topic}. Get actionable tips and best practices to achieve your goals!",
             character_count=len(title[:60]),
             keywords=keyword_list[:3]
         ))
@@ -130,69 +131,67 @@ def generate_fallback_titles(topic: str, keywords: Optional[str] = None) -> List
     return seo_titles
 
 def generate_seo_titles(topic: str, keywords: Optional[str] = None) -> List[SEOTitle]:
-    """Generate 10 SEO-optimized titles with descriptions using Google Gemini (FREE)."""
+    """Generate 10 SEO-optimized titles using Google Gemini."""
     
-    if not model:
-        raise HTTPException(status_code=500, detail="AI model not initialized. Please set GEMINI_API_KEY")
+    if DISABLE_AI or not model:
+        logger.info("Using fallback titles (AI disabled or not initialized)")
+        return generate_fallback_titles(topic, keywords)
     
-    # Simplified prompt for better JSON compliance
-    prompt = f"""Generate 10 SEO titles for: {topic}
+    keyword_hint = f"\nKeywords to include: {keywords}" if keywords else ""
+    
+    prompt = f"""Generate 10 SEO-optimized titles for the topic: "{topic}"{keyword_hint}
 
-Return ONLY this JSON format with NO other text:
-[{{"title":"Example Title Here","description":"Example description here that is around 150 characters long.","keywords":["keyword1","keyword2","keyword3"]}},{{"title":"Another Title","description":"Another description here.","keywords":["word1","word2","word3"]}}]
+Return ONLY valid JSON array with this exact format (no markdown, no extra text):
+[{{"title":"Example Title Here","description":"Example description approximately 150 characters long.","keywords":["keyword1","keyword2","keyword3"]}}]
 
-Rules:
-- Exactly 10 items
-- Titles: 50-60 characters
-- Descriptions: 150 characters
-- 3 keywords each
-- Pure JSON only - no markdown, no text before/after"""
+Requirements:
+- Return exactly 10 title objects
+- Each title: 50-60 characters maximum
+- Each description: 140-160 characters
+- Each item has exactly 3 relevant keywords
+- Pure JSON array only - no markdown code blocks, no explanatory text
+- Valid JSON syntax with proper escaping"""
 
     try:
         logger.info(f"Generating titles for topic: {topic}")
         
-        # Optimize generation settings for speed and better JSON
         response = model.generate_content(
             prompt,
             generation_config=genai.GenerationConfig(
                 max_output_tokens=3000,
-                temperature=0.5,  # Lower for more consistent JSON
-                top_p=0.8,
-                top_k=20
+                temperature=0.7,
+                top_p=0.9,
+                top_k=40
             )
         )
         
-        content = response.text
+        content = response.text.strip()
         logger.info("✅ Received response from Gemini API")
         
-        # Aggressive JSON cleaning
-        content = content.strip()
+        # Clean the response
         content = re.sub(r'```json\s*', '', content)
         content = re.sub(r'```\s*', '', content)
         content = content.replace('`', '')
         
-        # Find JSON array boundaries
+        # Find JSON array
         start_idx = content.find('[')
         end_idx = content.rfind(']')
         
         if start_idx == -1 or end_idx == -1:
-            logger.error(f"No valid JSON array found in response: {content[:200]}")
-            logger.info("Using fallback titles instead")
+            logger.error("No valid JSON array found in response")
             return generate_fallback_titles(topic, keywords)
         
         json_content = content[start_idx:end_idx + 1]
         
-        # Try to parse JSON
+        # Parse JSON
         try:
             titles_data = json.loads(json_content)
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error: {str(e)}")
-            logger.error(f"Position: {e.pos}, Line: {e.lineno}, Column: {e.colno}")
-            
-            # Try aggressive fixes
+            # Try to fix common JSON issues
             json_content = json_content.replace("'", '"')
-            json_content = re.sub(r',\s*}', '}', json_content)  # Remove trailing commas
-            json_content = re.sub(r',\s*]', ']', json_content)  # Remove trailing commas
+            json_content = re.sub(r',\s*}', '}', json_content)
+            json_content = re.sub(r',\s*]', ']', json_content)
             
             try:
                 titles_data = json.loads(json_content)
@@ -201,7 +200,6 @@ Rules:
                 logger.error("Could not fix JSON, using fallback")
                 return generate_fallback_titles(topic, keywords)
         
-        # Validate we have a list
         if not isinstance(titles_data, list):
             logger.error(f"Response is not a list: {type(titles_data)}")
             return generate_fallback_titles(topic, keywords)
@@ -210,17 +208,21 @@ Rules:
         seo_titles = []
         for item in titles_data[:10]:
             try:
+                title_text = item.get('title', 'SEO Title')[:60]
+                desc_text = item.get('description', 'Description here.')[:160]
+                kw_list = item.get('keywords', [topic, 'guide', 'tips'])[:3]
+                
                 seo_titles.append(SEOTitle(
-                    title=item.get('title', 'SEO Title')[:60],
-                    description=item.get('description', 'Description here.')[:160],
-                    character_count=len(item.get('title', '')[:60]),
-                    keywords=item.get('keywords', [topic, 'guide', 'tips'])[:3]
+                    title=title_text,
+                    description=desc_text,
+                    character_count=len(title_text),
+                    keywords=kw_list
                 ))
             except Exception as e:
                 logger.warning(f"Skipping invalid title: {str(e)}")
                 continue
         
-        # Ensure we have at least some titles
+        # Ensure we have enough titles
         if len(seo_titles) < 5:
             logger.warning(f"Only got {len(seo_titles)} titles, using fallback")
             return generate_fallback_titles(topic, keywords)
@@ -241,27 +243,37 @@ Rules:
 def format_titles_for_telex(titles: List[SEOTitle]) -> str:
     """Format SEO titles for display in Telex chat."""
     
-    message = "✅ **Your 10 SEO-Optimized Titles:**\n\n"
+    message = "✨ **Your 10 SEO-Optimized Titles:**\n\n"
     
     for i, title in enumerate(titles, 1):
         message += f"**{i}. {title.title}**\n"
         message += f"📝 {title.description}\n"
-        message += f"🏷️ {', '.join(title.keywords[:3])} • {title.character_count} chars\n\n"
+        message += f"🏷️ Keywords: {', '.join(title.keywords[:3])} • {title.character_count} chars\n\n"
     
-    message += "💡 **Tips:** Test multiple titles • Optimize for CTR • A/B test results\n"
+    message += "💡 **Pro Tips:**\n"
+    message += "• Test multiple titles for best CTR\n"
+    message += "• Use power words and numbers\n"
+    message += "• Keep titles under 60 characters\n"
+    message += "• A/B test your favorites\n"
     
     return message
 
 @app.get("/")
 async def root():
-    """Health check endpoint."""
+    """Root endpoint with agent information."""
     return {
         "status": "online",
         "agent": "SEO Title Generator",
         "version": "1.0.0",
-        "description": "AI agent that generates 10 SEO-optimized titles with descriptions",
-        "ai_model": "Google Gemini 2.5 Flash (FREE)",
-        "api_configured": model is not None
+        "description": "AI-powered SEO title generator that creates 10 optimized titles with descriptions",
+        "ai_model": "Google Gemini (FREE)",
+        "ai_status": "connected" if model else "fallback mode",
+        "endpoints": {
+            "health": "/health",
+            "webhook": "/webhook",
+            "generate": "/generate",
+            "info": "/agent-info"
+        }
     }
 
 @app.get("/health")
@@ -269,17 +281,18 @@ async def health_check():
     """Detailed health check."""
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "ai_model": "Google Gemini 2.5 Flash (FREE)",
-        "ai_client": "connected" if model else "disconnected"
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "ai_model": "Google Gemini",
+        "ai_status": "connected" if model else "fallback",
+        "version": "1.0.0"
     }
 
 @app.get("/webhook")
 async def webhook_health():
-    """Health check endpoint for webhook - Telex.im checks this first."""
+    """Webhook health check - Telex checks this first."""
     return {
         "status": "ready",
-        "message": "Webhook endpoint is active and ready to receive POST requests",
+        "message": "Webhook endpoint is active",
         "endpoint": "/webhook",
         "method": "POST",
         "agent": "SEO Title Generator",
@@ -288,125 +301,130 @@ async def webhook_health():
 
 @app.post("/webhook")
 async def telex_webhook(request: Request):
-    """Main webhook endpoint for Telex.im A2A protocol."""
+    """Main webhook endpoint for Telex.im integration."""
     
     try:
-        # Log raw request for debugging
-        raw_body = await request.body()
+        body = await request.json()
         logger.info(f"📨 Received webhook request")
         
-        # Try to parse as TelexRequest
-        try:
-            body_json = await request.json()
-            
-            # Handle different request formats
-            if "message" in body_json:
-                telex_request = TelexRequest(**body_json)
-                message_content = telex_request.message.content.strip()
-                channel_id = telex_request.message.channel_id
-            elif "content" in body_json:
-                # Alternative format
-                message_content = body_json.get("content", "").strip()
-                channel_id = body_json.get("channel_id", "unknown")
-            else:
-                logger.error(f"❌ Unknown request format")
-                return {
-                    "response": "❌ Invalid request format"
-                }
-                
-        except Exception as parse_error:
-            logger.error(f"❌ Failed to parse request: {str(parse_error)}")
+        # Extract message content (handle different formats)
+        message_content = ""
+        
+        if "message" in body:
+            if isinstance(body["message"], dict):
+                message_content = body["message"].get("content", "")
+            elif isinstance(body["message"], str):
+                message_content = body["message"]
+        elif "content" in body:
+            message_content = body.get("content", "")
+        else:
+            logger.error("❌ Unknown request format")
             return {
-                "response": f"❌ Error parsing request"
+                "response": "❌ Invalid request format. Please send a message with 'content' field."
             }
         
-        logger.info(f"📝 Processing: {message_content[:50]}")
+        message_content = message_content.strip()
+        logger.info(f"📝 Processing: {message_content[:100]}")
         
-        # Parse the message to extract topic and keywords
-        if not any(trigger in message_content.lower() for trigger in ['seo', 'title', 'generate']):
+        # Check if it's a help/info request
+        if not any(trigger in message_content.lower() for trigger in ['seo', 'title', 'generate', 'create']):
             return {
-                "response": "👋 **Welcome! I'm SEO Muse, your AI SEO expert.**\n\n"
-                           "🎯 I create SEO-optimized titles that rank!\n\n"
+                "response": "👋 **Welcome to SEO Title Generator!**\n\n"
+                           "🎯 I create 10 SEO-optimized titles that rank!\n\n"
                            "**How to use:**\n"
-                           "• `generate seo titles for: your topic`\n"
-                           "• `seo: topic | keywords: word1, word2`\n\n"
-                           "**Example:**\n"
-                           "`generate seo titles for: WordPress SEO`\n\n"
-                           "Ready to boost your SEO? 🚀"
+                           "• `generate seo titles for: [your topic]`\n"
+                           "• `seo: [topic] | keywords: [word1, word2]`\n\n"
+                           "**Examples:**\n"
+                           "• `generate seo titles for: AI in healthcare`\n"
+                           "• `seo: Python programming | keywords: tutorial, beginner, code`\n\n"
+                           "Ready to boost your SEO? Let's go! 🚀"
             }
         
         # Extract topic and keywords
         topic = message_content
         keywords = None
         
+        # Handle format: "topic | keywords: word1, word2"
         if '|' in message_content:
             parts = message_content.split('|')
             topic = parts[0].strip()
-            if 'keywords:' in parts[1].lower():
+            if len(parts) > 1 and 'keywords:' in parts[1].lower():
                 keywords = parts[1].split('keywords:', 1)[1].strip()
         
-        # Clean up topic
-        for prefix in ['generate seo titles for:', 'seo titles for:', 'seo:', 'generate titles for:']:
-            if prefix in topic.lower():
-                topic = topic.lower().replace(prefix, '').strip()
+        # Clean up topic by removing common prefixes
+        prefixes_to_remove = [
+            'generate seo titles for:',
+            'seo titles for:',
+            'create seo titles for:',
+            'generate titles for:',
+            'create titles for:',
+            'seo:',
+            'generate:',
+            'create:'
+        ]
+        
+        topic_lower = topic.lower()
+        for prefix in prefixes_to_remove:
+            if topic_lower.startswith(prefix):
+                topic = topic[len(prefix):].strip()
                 break
         
+        # Validate topic
         if not topic or len(topic) < 3:
             return {
-                "response": "❌ Please provide a valid topic.\n\n"
-                           "Example: `generate seo titles for: AI trends`"
+                "response": "❌ **Please provide a valid topic!**\n\n"
+                           "Example: `generate seo titles for: sustainable fashion`"
             }
         
-        # Send immediate acknowledgment with a professional processing message
-        logger.info(f"🎯 Generating for: {topic}")
+        logger.info(f"🎯 Generating titles for: {topic}")
+        if keywords:
+            logger.info(f"🏷️ With keywords: {keywords}")
         
-        # Simpler processing message for faster response
-        processing_msg = f"🎨 Generating SEO titles for: **{topic}**\n\n"
-        
-        # Generate SEO titles with timeout protection
+        # Generate titles with timeout
         try:
             titles = await asyncio.wait_for(
                 asyncio.to_thread(generate_seo_titles, topic, keywords),
-                timeout=25.0  # 25 second timeout
+                timeout=30.0
             )
         except asyncio.TimeoutError:
             logger.error("⏱️ Generation timed out")
             return {
                 "response": "⏱️ **Request timed out**\n\n"
-                           "Try: `generate seo titles for: simpler topic`"
+                           "The request took too long. Please try a simpler topic or try again in a moment."
             }
         
-        # Format response for Telex
-        formatted_message = processing_msg + format_titles_for_telex(titles)
+        # Format and return response
+        formatted_message = format_titles_for_telex(titles)
         
         return {
             "response": formatted_message,
             "metadata": {
                 "titles_generated": len(titles),
                 "topic": topic,
-                "ai_model": "Google Gemini 2.5 Flash (FREE)",
-                "timestamp": datetime.utcnow().isoformat()
+                "keywords": keywords,
+                "ai_model": "Google Gemini",
+                "timestamp": datetime.utcnow().isoformat() + "Z"
             }
         }
         
     except Exception as e:
-        logger.error(f"Error processing webhook: {str(e)}")
+        logger.error(f"❌ Error processing webhook: {str(e)}", exc_info=True)
         return {
-            "response": "❌ An error occurred. Please try again."
+            "response": "❌ An error occurred while processing your request. Please try again."
         }
 
 @app.post("/generate")
-async def generate_titles_api(topic: str, keywords: Optional[str] = None):
-    """Direct API endpoint for generating SEO titles (for testing)."""
+async def generate_titles_api(request: GenerateRequest):
+    """Direct API endpoint for generating SEO titles."""
     
     try:
-        titles = generate_seo_titles(topic, keywords)
+        titles = generate_seo_titles(request.topic, request.keywords)
         
         return AgentResponse(
             success=True,
             titles=titles,
             message=f"Successfully generated {len(titles)} SEO titles",
-            timestamp=datetime.utcnow().isoformat()
+            timestamp=datetime.utcnow().isoformat() + "Z"
         )
         
     except Exception as e:
@@ -415,18 +433,18 @@ async def generate_titles_api(topic: str, keywords: Optional[str] = None):
 
 @app.get("/agent-info")
 async def agent_info():
-    """Return agent information for Telex.im discovery."""
+    """Agent information for Telex.im discovery."""
     return {
         "name": "SEO Title Generator",
         "description": "AI agent that generates 10 SEO-optimized titles with descriptions for any topic",
         "version": "1.0.0",
-        "ai_model": "Google Gemini 2.5 Flash (FREE)",
-        "api_cost": "FREE - No charges",
+        "ai_model": "Google Gemini (FREE)",
+        "api_cost": "FREE - No charges for Gemini API",
         "capabilities": [
-            "Generate SEO-optimized titles",
-            "Create meta descriptions",
+            "Generate SEO-optimized titles (50-60 chars)",
+            "Create meta descriptions (150-160 chars)",
             "Extract relevant keywords",
-            "Optimize for search engines"
+            "Optimize for search engines and CTR"
         ],
         "usage": {
             "commands": [
@@ -435,14 +453,25 @@ async def agent_info():
             ],
             "examples": [
                 "generate seo titles for: sustainable fashion trends",
-                "seo: AI in healthcare | keywords: machine learning, diagnosis"
+                "seo: AI in healthcare | keywords: machine learning, diagnosis",
+                "create seo titles for: WordPress SEO plugins"
             ]
         },
-        "webhook_url": "/webhook",
-        "protocol": "A2A"
+        "endpoints": {
+            "webhook": "/webhook",
+            "health": "/health",
+            "generate": "/generate (POST with JSON)",
+            "info": "/agent-info"
+        },
+        "protocol": "Telex Webhook",
+        "author": "Built for HNG Internship",
+        "repository": "https://github.com/alphakenz/seo-title-agent"
     }
 
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    host = os.getenv("HOST", "0.0.0.0")
+    
+    logger.info(f"🚀 Starting SEO Title Generator on {host}:{port}")
+    uvicorn.run(app, host=host, port=port)
