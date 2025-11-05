@@ -4,13 +4,12 @@ from pydantic import BaseModel
 from typing import List, Optional
 import google.generativeai as genai
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 from dotenv import load_dotenv
 import asyncio
 import re
-from concurrent.futures import ThreadPoolExecutor
 
 # Load environment variables
 load_dotenv()
@@ -36,9 +35,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Thread pool for background tasks
-executor = ThreadPoolExecutor(max_workers=2)
 
 # Pydantic models
 class SEOTitle(BaseModel):
@@ -97,7 +93,10 @@ if not DISABLE_AI and GEMINI_API_KEY:
 
 def generate_fallback_titles(topic: str, keywords: Optional[str] = None) -> List[SEOTitle]:
     """Generate instant fallback titles - FAST and reliable."""
-    keyword_list = [k.strip() for k in keywords.split(',')] if keywords else [topic, "guide", "tips"]
+    if keywords and keywords.strip():
+        keyword_list = [k.strip() for k in keywords.split(',') if k.strip()]
+    else:
+        keyword_list = [topic, "guide", "tips"]
     
     # Smart title templates
     templates = [
@@ -158,34 +157,42 @@ Rules:
         )
         
         content = response.text.strip()
-        
+
         # Clean response
         content = re.sub(r'```json\s*', '', content)
         content = re.sub(r'```\s*', '', content)
         content = content.replace('`', '')
-        
-        # Extract JSON
-        start_idx = content.find('[')
-        end_idx = content.rfind(']')
-        
-        if start_idx == -1 or end_idx == -1:
-            logger.warning("No JSON array found, using fallback")
-            return generate_fallback_titles(topic, keywords)
-        
-        json_content = content[start_idx:end_idx + 1]
-        
+
+        # Try to parse the cleaned content directly first
+        titles_data = None
         try:
-            titles_data = json.loads(json_content)
+            titles_data = json.loads(content)
         except json.JSONDecodeError:
-            # Try to fix JSON
-            json_content = json_content.replace("'", '"')
-            json_content = re.sub(r',\s*}', '}', json_content)
-            json_content = re.sub(r',\s*]', ']', json_content)
+            pass
+
+        # If direct parsing failed, extract JSON array
+        if titles_data is None:
+            start_idx = content.find('[')
+            end_idx = content.rfind(']')
+
+            if start_idx == -1 or end_idx == -1:
+                logger.warning("No JSON array found, using fallback")
+                return generate_fallback_titles(topic, keywords)
+
+            json_content = content[start_idx:end_idx + 1]
+
             try:
                 titles_data = json.loads(json_content)
-            except:
-                logger.warning("JSON parsing failed, using fallback")
-                return generate_fallback_titles(topic, keywords)
+            except json.JSONDecodeError:
+                # Try to fix JSON
+                json_content = json_content.replace("'", '"')
+                json_content = re.sub(r',\s*}', '}', json_content)
+                json_content = re.sub(r',\s*]', ']', json_content)
+                try:
+                    titles_data = json.loads(json_content)
+                except:
+                    logger.warning("JSON parsing failed, using fallback")
+                    return generate_fallback_titles(topic, keywords)
         
         if not isinstance(titles_data, list) or len(titles_data) < 5:
             return generate_fallback_titles(topic, keywords)
@@ -254,7 +261,7 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
         "ai_model": "Google Gemini" if model else "Fallback",
         "mode": "fast" if USE_FAST_MODE else "standard",
         "version": "1.0.0"
@@ -389,7 +396,7 @@ Ready to create amazing titles? 🚀"""
             "topic": topic,
             "keywords": keywords,
             "mode": "ai" if (model and not USE_FAST_MODE) else "fallback",
-            "timestamp": datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
         })
         
     except Exception as e:
@@ -436,7 +443,7 @@ async def generate_titles_api(request: GenerateRequest):
             success=True,
             titles=titles,
             message=f"Generated {len(titles)} titles",
-            timestamp=datetime.utcnow().isoformat() + "Z"
+            timestamp=datetime.now(timezone.utc).isoformat() + "Z"
         )
         
     except Exception as e:
