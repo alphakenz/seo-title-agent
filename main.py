@@ -153,15 +153,15 @@ Requirements:
 - Valid JSON syntax with proper escaping"""
 
     try:
-        logger.info(f"Generating titles for topic: {topic}")
+        logger.info(f"🎯 Generating titles for topic: {topic}")
         
         response = model.generate_content(
             prompt,
             generation_config=genai.GenerationConfig(
-                max_output_tokens=2000,  # Reduced for faster response
+                max_output_tokens=1500,  # Further reduced
                 temperature=0.7,
-                top_p=0.8,  # Reduced for faster response
-                top_k=20    # Reduced for faster response
+                top_p=0.8,
+                top_k=20
             )
         )
         
@@ -236,7 +236,7 @@ Requirements:
         return seo_titles[:10]
         
     except Exception as e:
-        logger.error(f"Error generating titles: {str(e)}")
+        logger.error(f"❌ Error generating titles: {str(e)}")
         logger.info("Returning fallback titles")
         return generate_fallback_titles(topic, keywords)
 
@@ -426,38 +426,22 @@ async def telex_webhook(request: Request):
         if keywords:
             logger.info(f"🏷️ With keywords: {keywords}")
         
-        # Generate titles with timeout (reduced to 20s for Telex compatibility)
+        # CRITICAL FIX: Reduce timeout to 8 seconds for Telex compatibility
+        # If it times out, immediately return fallback
         try:
             titles = await asyncio.wait_for(
                 asyncio.to_thread(generate_seo_titles, topic, keywords),
-                timeout=20.0
+                timeout=8.0
             )
+            logger.info(f"✅ Generated {len(titles)} titles successfully")
         except asyncio.TimeoutError:
-            logger.error("⏱️ Generation timed out")
-            timeout_message = ("⏱️ **Request timed out**\n\n"
-                             "Please try a simpler topic or try again.")
-            
-            if "jsonrpc" in body and "id" in body:
-                return {
-                    "jsonrpc": "2.0",
-                    "id": body["id"],
-                    "result": {"response": timeout_message}
-                }
-            else:
-                return {"response": timeout_message}
+            logger.warning("⏱️ Generation timed out, using fallback")
+            # Generate fallback immediately
+            titles = generate_fallback_titles(topic, keywords)
         except Exception as gen_error:
             logger.error(f"❌ Generation error: {str(gen_error)}", exc_info=True)
-            gen_error_message = ("❌ **Error generating titles**\n\n"
-                               "Please try again with a different topic.")
-            
-            if "jsonrpc" in body and "id" in body:
-                return {
-                    "jsonrpc": "2.0",
-                    "id": body["id"],
-                    "result": {"response": gen_error_message}
-                }
-            else:
-                return {"response": gen_error_message}
+            # Use fallback on any error
+            titles = generate_fallback_titles(topic, keywords)
         
         # Format and return response
         formatted_message = format_titles_for_telex(titles)
@@ -465,7 +449,7 @@ async def telex_webhook(request: Request):
         # Check if request was JSON-RPC format
         if "jsonrpc" in body and "id" in body:
             # Return JSON-RPC response
-            return {
+            response = {
                 "jsonrpc": "2.0",
                 "id": body["id"],
                 "result": {
@@ -479,9 +463,11 @@ async def telex_webhook(request: Request):
                     }
                 }
             }
+            logger.info("📤 Sending JSON-RPC response")
+            return response
         else:
             # Return simple response
-            return {
+            response = {
                 "response": formatted_message,
                 "metadata": {
                     "titles_generated": len(titles),
@@ -491,24 +477,28 @@ async def telex_webhook(request: Request):
                     "timestamp": datetime.utcnow().isoformat() + "Z"
                 }
             }
+            logger.info("📤 Sending simple response")
+            return response
         
     except Exception as e:
         logger.error(f"❌ Error processing webhook: {str(e)}", exc_info=True)
         
+        error_response = {
+            "response": "❌ An error occurred. Please try again or use a simpler topic."
+        }
+        
         # Check if request was JSON-RPC format
-        if "jsonrpc" in body and "id" in body:
-            return {
-                "jsonrpc": "2.0",
-                "id": body["id"],
-                "error": {
-                    "code": -32603,
-                    "message": "Internal error processing request"
+        try:
+            if "jsonrpc" in body and "id" in body:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": error_response
                 }
-            }
-        else:
-            return {
-                "response": "❌ An error occurred while processing your request. Please try again."
-            }
+        except:
+            pass
+            
+        return error_response
 
 @app.post("/generate")
 async def generate_titles_api(request: GenerateRequest):
