@@ -22,14 +22,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI
 app = FastAPI(
     title="SEO Title Generator Agent",
     description="AI-powered SEO title generator for Telex.im",
     version="1.0.0"
 )
 
-# Enable CORS
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -38,9 +37,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------------------
 # Pydantic models
-# ---------------------------
 class SEOTitle(BaseModel):
     title: str
     description: str
@@ -57,22 +54,21 @@ class GenerateRequest(BaseModel):
     topic: str
     keywords: Optional[str] = None
 
-# ---------------------------
-# Google Gemini initialization
-# ---------------------------
+# Initialize Google Gemini
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DISABLE_AI = os.getenv("DISABLE_AI", "false").lower() in ("1", "true", "yes")
 USE_FAST_MODE = os.getenv("USE_FAST_MODE", "false").lower() in ("1", "true", "yes")
 TEST_MODE = os.getenv("TEST_MODE", "false").lower() in ("1", "true", "yes")
 
+# Initialize model with error handling
 model = None
 if not DISABLE_AI and GEMINI_API_KEY and not TEST_MODE:
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         preferred_models = [
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
-            "gemini-pro"
+            'gemini-1.5-flash',
+            'gemini-1.5-pro',
+            'gemini-pro'
         ]
         for model_name in preferred_models:
             try:
@@ -81,6 +77,7 @@ if not DISABLE_AI and GEMINI_API_KEY and not TEST_MODE:
                 break
             except Exception as e:
                 logger.warning(f"⚠️ {model_name} unavailable: {str(e)}")
+                continue
         if not model:
             logger.warning("❌ No Gemini models available, using fallback")
     except Exception as e:
@@ -88,9 +85,7 @@ if not DISABLE_AI and GEMINI_API_KEY and not TEST_MODE:
 else:
     logger.info(f"🔄 Running in {'TEST' if TEST_MODE else 'FALLBACK'} mode")
 
-# ---------------------------
 # Fallback title generator
-# ---------------------------
 def generate_fallback_titles(topic: str, keywords: Optional[str] = None) -> List[SEOTitle]:
     if keywords and keywords.strip():
         keyword_list = [k.strip() for k in keywords.split(',') if k.strip()][:3]
@@ -111,7 +106,7 @@ def generate_fallback_titles(topic: str, keywords: Optional[str] = None) -> List
     ]
 
     seo_titles = []
-    for title_template in templates[:10]:
+    for i, title_template in enumerate(templates[:10]):
         title_text = title_template[:60]
         seo_titles.append(SEOTitle(
             title=title_text,
@@ -119,32 +114,33 @@ def generate_fallback_titles(topic: str, keywords: Optional[str] = None) -> List
             character_count=len(title_text),
             keywords=keyword_list
         ))
+
+    logger.info(f"✅ Generated {len(seo_titles)} fallback titles")
     return seo_titles
 
-# ---------------------------
 # Extract JSON from AI response
-# ---------------------------
 def extract_json_from_text(text: str):
     text = re.sub(r'```(?:json)?\s*', '', text)
     text = re.sub(r'```\s*', '', text)
     text = text.strip()
+
     try:
         data = json.loads(text)
         if isinstance(data, list):
             return data
     except:
         pass
+
     match = re.search(r'\[.*\]', text, re.DOTALL)
     if match:
         try:
             return json.loads(match.group())
         except:
             pass
+
     return None
 
-# ---------------------------
-# Generate SEO titles
-# ---------------------------
+# Generate SEO titles (sync)
 def generate_seo_titles_sync(topic: str, keywords: Optional[str] = None) -> List[SEOTitle]:
     if DISABLE_AI or not model or TEST_MODE or USE_FAST_MODE:
         return generate_fallback_titles(topic, keywords)
@@ -179,35 +175,43 @@ Rules:
 
         seo_titles = []
         for item in titles_data[:10]:
-            seo_titles.append(SEOTitle(
-                title=item.get("title", f"SEO Title for {topic}")[:60],
-                description=item.get("description", f"Learn about {topic}")[:160],
-                character_count=len(item.get("title", "")[:60]),
-                keywords=item.get("keywords", [topic])[:3]
-            ))
+            try:
+                seo_titles.append(SEOTitle(
+                    title=item.get('title', f'SEO Title for {topic}')[:60],
+                    description=item.get('description', f'Learn about {topic}')[:160],
+                    character_count=len(item.get('title', '')[:60]),
+                    keywords=item.get('keywords', [topic])[:3]
+                ))
+            except:
+                continue
+
         while len(seo_titles) < 10:
             fallback = generate_fallback_titles(topic, keywords)
             seo_titles.extend(fallback[len(seo_titles):10])
+
         return seo_titles[:10]
+
     except Exception as e:
         logger.error(f"AI generation failed: {str(e)}")
         return generate_fallback_titles(topic, keywords)
 
-# ---------------------------
-# Format titles for Telex
-# ---------------------------
-def format_titles_for_telex(titles: List[SEOTitle]) -> str:
-    message = "**Your 10 SEO-Optimized Titles:**\n\n"
+# Format titles for Telex message parts
+def format_titles_for_telex(titles: List[SEOTitle]) -> List[dict]:
+    parts = []
     for i, title in enumerate(titles, 1):
-        message += f"**{i}. {title.title}**\n"
-        message += f"Description: {title.description}\n"
-        message += f"Keywords: {', '.join(title.keywords)} | Length: {title.character_count} chars\n\n"
-    message += "**Quick Tips:** Use numbers, power words, and keep under 60 chars for best CTR!"
-    return message
+        text = f"**{i}. {title.title}**\nDescription: {title.description}\nKeywords: {', '.join(title.keywords)} | Length: {title.character_count} chars"
+        parts.append({
+            "kind": "text",
+            "text": text
+        })
+    # Add a final quick tips part
+    parts.append({
+        "kind": "text",
+        "text": "**Quick Tips:** Use numbers, power words, and keep under 60 chars for best CTR!"
+    })
+    return parts
 
-# ---------------------------
-# Extract message from Telex request
-# ---------------------------
+# Extract message content from Telex request
 def extract_message_from_telex(body: dict) -> str:
     message_content = ""
     try:
@@ -253,9 +257,7 @@ def extract_message_from_telex(body: dict) -> str:
         logger.error(f"Error extracting message: {str(e)}")
     return message_content.strip() if message_content else ""
 
-# ---------------------------
 # Root endpoint
-# ---------------------------
 @app.get("/")
 async def root():
     return {
@@ -271,9 +273,7 @@ async def root():
         }
     }
 
-# ---------------------------
 # Health check
-# ---------------------------
 @app.get("/health")
 async def health_check():
     return {
@@ -283,9 +283,7 @@ async def health_check():
         "ai_enabled": bool(model)
     }
 
-# ---------------------------
 # Test endpoint
-# ---------------------------
 @app.post("/test")
 async def test_webhook():
     return {
@@ -293,9 +291,7 @@ async def test_webhook():
         "success": True
     }
 
-# ---------------------------
-# Telex Webhook endpoint
-# ---------------------------
+# Telex-compliant webhook
 @app.post("/webhook")
 async def telex_webhook(request: Request):
     rpc_id = "1"
@@ -307,6 +303,7 @@ async def telex_webhook(request: Request):
         if not message_content:
             message_content = "Please provide a topic!\nExample: generate seo titles for: AI trends"
 
+        # Remove prefixes
         prefixes = ['generate seo titles for:', 'seo titles for:', 'seo:', 'generate:', 'create:']
         topic_lower = message_content.lower()
         for prefix in prefixes:
@@ -314,10 +311,11 @@ async def telex_webhook(request: Request):
                 message_content = message_content[len(prefix):].strip()
                 break
 
+        # Generate titles
         titles = await asyncio.to_thread(generate_seo_titles_sync, message_content)
-        formatted_message = format_titles_for_telex(titles)
+        parts = format_titles_for_telex(titles)
 
-        response_payload = {
+        telex_message = {
             "jsonrpc": "2.0",
             "id": rpc_id,
             "result": {
@@ -330,15 +328,14 @@ async def telex_webhook(request: Request):
                         "messageId": str(uuid.uuid4()),
                         "role": "agent",
                         "kind": "message",
-                        "parts": [
-                            {"kind": "text", "text": formatted_message}
-                        ]
+                        "parts": parts
                     }
                 },
                 "kind": "task"
             }
         }
-        return response_payload
+
+        return telex_message
 
     except Exception as e:
         logger.error(f"❌ Webhook error: {str(e)}", exc_info=True)
@@ -352,9 +349,7 @@ async def telex_webhook(request: Request):
             }
         }
 
-# ---------------------------
 # Direct API for testing
-# ---------------------------
 @app.post("/generate")
 async def generate_titles_api(request: GenerateRequest):
     try:
@@ -369,9 +364,7 @@ async def generate_titles_api(request: GenerateRequest):
         logger.error(f"Generate API error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ---------------------------
 # Run app
-# ---------------------------
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
