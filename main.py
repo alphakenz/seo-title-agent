@@ -95,7 +95,6 @@ def generate_fallback_titles(topic: str, keywords: Optional[str] = None) -> List
     else:
         keyword_list = [topic.split()[0] if topic else "guide", "tips", "2025"]
     
-    # Smart title templates
     templates = [
         f"{topic.title()}: Complete Guide for 2025",
         f"Top 10 {topic.title()} Tips and Tricks",
@@ -124,12 +123,10 @@ def generate_fallback_titles(topic: str, keywords: Optional[str] = None) -> List
 
 def extract_json_from_text(text: str):
     """Extract JSON array from AI response text."""
-    # Remove markdown code blocks
     text = re.sub(r'```(?:json)?\s*', '', text)
     text = re.sub(r'```\s*', '', text)
     text = text.strip()
     
-    # Try to parse as-is first
     try:
         data = json.loads(text)
         if isinstance(data, list):
@@ -137,7 +134,6 @@ def extract_json_from_text(text: str):
     except:
         pass
     
-    # Try to find JSON array
     match = re.search(r'\[.*\]', text, re.DOTALL)
     if match:
         try:
@@ -150,13 +146,10 @@ def extract_json_from_text(text: str):
 def generate_seo_titles_sync(topic: str, keywords: Optional[str] = None) -> List[SEOTitle]:
     """Synchronous title generation."""
     
-    # Use fallback if no model or AI is disabled
     if DISABLE_AI or not model or TEST_MODE:
         return generate_fallback_titles(topic, keywords)
     
-    # Try AI generation with timeout handling in mind
     if USE_FAST_MODE:
-        # In fast mode, go straight to fallback for speed
         return generate_fallback_titles(topic, keywords)
     
     keyword_hint = f"\nKeywords: {keywords}" if keywords else ""
@@ -191,7 +184,6 @@ Rules:
             logger.warning("Insufficient AI response, using fallback")
             return generate_fallback_titles(topic, keywords)
         
-        # Convert to SEOTitle objects
         seo_titles = []
         for item in titles_data[:10]:
             try:
@@ -204,7 +196,6 @@ Rules:
             except:
                 continue
         
-        # Ensure we have 10 titles
         while len(seo_titles) < 10:
             fallback = generate_fallback_titles(topic, keywords)
             seo_titles.extend(fallback[len(seo_titles):10])
@@ -216,79 +207,40 @@ Rules:
         return generate_fallback_titles(topic, keywords)
 
 def format_titles_for_telex(titles: List[SEOTitle]) -> str:
-    """Format titles for Telex chat display."""
-    
     message = "**Your 10 SEO-Optimized Titles:**\n\n"
-    
     for i, title in enumerate(titles, 1):
         message += f"**{i}. {title.title}**\n"
         message += f"Description: {title.description}\n"
         message += f"Keywords: {', '.join(title.keywords)} | Length: {title.character_count} chars\n\n"
-    
     message += "**Quick Tips:** Use numbers, power words, and keep under 60 chars for best CTR!"
-    
     return message
 
 def extract_message_from_telex(body: dict) -> str:
-    """Extract message content from various Telex request formats."""
+    """Robust extraction of text from Telex JSON-RPC 2.0 payload."""
     message_content = ""
-    
     try:
-        # Format 1: Standard webhook format with text field
-        if "text" in body:
-            message_content = body["text"]
-        
-        # Format 2: Message field with content
-        elif "message" in body:
-            if isinstance(body["message"], str):
-                message_content = body["message"]
-            elif isinstance(body["message"], dict):
-                if "text" in body["message"]:
-                    message_content = body["message"]["text"]
-                elif "content" in body["message"]:
-                    message_content = body["message"]["content"]
-                elif "parts" in body["message"]:
-                    for part in body["message"]["parts"]:
-                        if part.get("kind") == "text":
-                            message_content = part.get("text", "")
-                            break
-        
-        # Format 3: Params structure (JSON-RPC style)
-        elif "params" in body:
-            params = body["params"]
-            if "text" in params:
-                message_content = params["text"]
-            elif "message" in params:
-                msg = params["message"]
-                if isinstance(msg, str):
-                    message_content = msg
-                elif isinstance(msg, dict):
-                    if "text" in msg:
-                        message_content = msg["text"]
-                    elif "content" in msg:
-                        message_content = msg["content"]
-                    elif "parts" in msg:
-                        for part in msg["parts"]:
-                            if part.get("kind") == "text":
-                                message_content = part.get("text", "")
-                                break
-        
-        # Format 4: Direct content field
-        elif "content" in body:
-            message_content = body["content"]
-        
-        # Format 5: Query field
-        elif "query" in body:
-            message_content = body["query"]
-            
+        if "params" in body and "message" in body["params"]:
+            msg = body["params"]["message"]
+            if isinstance(msg, dict) and "parts" in msg:
+                texts = []
+                for part in msg["parts"]:
+                    if part.get("kind") == "text" and "text" in part:
+                        clean_text = re.sub(r'<.*?>', '', part["text"]).strip()
+                        if clean_text:
+                            texts.append(clean_text)
+                message_content = " ".join(texts)
+
+        if not message_content:
+            if "text" in body:
+                message_content = body["text"].strip()
+            elif "message" in body and isinstance(body["message"], str):
+                message_content = body["message"].strip()
     except Exception as e:
         logger.error(f"Error extracting message: {str(e)}")
-    
-    return message_content.strip() if message_content else ""
+    return message_content
 
 @app.get("/")
 async def root():
-    """Root endpoint - agent info."""
     return {
         "status": "online",
         "agent": "SEO Title Generator",
@@ -304,7 +256,6 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
     return {
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -314,7 +265,6 @@ async def health_check():
 
 @app.post("/test")
 async def test_webhook():
-    """Test endpoint that always works."""
     return {
         "response": "✅ Webhook is working! Try: 'generate seo titles for: your topic'",
         "success": True
@@ -322,7 +272,6 @@ async def test_webhook():
 
 @app.get("/webhook")
 async def webhook_get():
-    """GET endpoint for webhook - for browser testing."""
     return {
         "status": "ready",
         "message": "✅ Webhook is active! Use POST method to send messages.",
@@ -333,37 +282,27 @@ async def webhook_get():
 
 @app.post("/webhook")
 async def telex_webhook(request: Request):
-    """Main webhook endpoint for Telex.im integration."""
-    
     start_time = datetime.now(timezone.utc)
-    
     try:
-        # Get request body
         body = await request.json()
         logger.info(f"📨 Webhook called at {start_time.isoformat()}")
         logger.info(f"📋 Request body keys: {list(body.keys())}")
         
-        # Extract message
         message_content = extract_message_from_telex(body)
         logger.info(f"📝 Extracted message: {message_content[:100]}")
         
-        # TEST MODE - return immediately
         if TEST_MODE:
-            test_response = {
+            return {
                 "response": f"**TEST MODE**\n\nReceived: '{message_content}'\n\nWebhook is working! Disable TEST_MODE to generate real titles.",
                 "success": True
             }
-            logger.info("Returning TEST response")
-            return test_response
         
-        # Handle empty messages
         if not message_content:
             return {
                 "response": "**SEO Title Generator**\n\nSay: generate seo titles for: [your topic]",
                 "success": True
             }
         
-        # Help/info messages
         if message_content.lower() in ['help', 'info', 'how', '?', 'hello', 'hi']:
             help_msg = """**SEO Title Generator**
 
@@ -375,24 +314,16 @@ I create 10 SEO-optimized titles instantly!
 
 **Example:**
 generate seo titles for: sustainable fashion"""
-            
-            return {
-                "response": help_msg,
-                "success": True
-            }
+            return {"response": help_msg, "success": True}
         
-        # Extract topic
         topic = message_content
         keywords = None
-        
-        # Handle "topic | keywords: word1, word2" format
         if '|' in message_content:
             parts = message_content.split('|', 1)
             topic = parts[0].strip()
             if len(parts) > 1 and 'keyword' in parts[1].lower():
                 keywords = parts[1].split(':', 1)[-1].strip()
         
-        # Clean topic - remove command prefixes
         prefixes = ['generate seo titles for:', 'seo titles for:', 'seo:', 'generate:', 'create:']
         topic_lower = topic.lower()
         for prefix in prefixes:
@@ -400,7 +331,6 @@ generate seo titles for: sustainable fashion"""
                 topic = topic[len(prefix):].strip()
                 break
         
-        # Validate topic
         if not topic or len(topic) < 2:
             return {
                 "response": "Please provide a topic!\n\nExample: generate seo titles for: AI trends",
@@ -408,10 +338,7 @@ generate seo titles for: sustainable fashion"""
             }
         
         logger.info(f"Generating for topic: {topic}")
-        
-        # Generate titles with timeout
         timeout_duration = 4.0 if USE_FAST_MODE else 7.0
-        
         try:
             titles = await asyncio.wait_for(
                 asyncio.to_thread(generate_seo_titles_sync, topic, keywords),
@@ -421,22 +348,13 @@ generate seo titles for: sustainable fashion"""
             logger.warning(f"⏱️ Timeout after {timeout_duration}s")
             titles = generate_fallback_titles(topic, keywords)
         
-        # Format response
         formatted_message = format_titles_for_telex(titles)
-        
-        # Log timing
         duration = (datetime.now(timezone.utc) - start_time).total_seconds()
         logger.info(f"✅ Response ready in {duration:.2f}s")
-        
-        return {
-            "response": formatted_message,
-            "success": True
-        }
+        return {"response": formatted_message, "success": True}
         
     except Exception as e:
         logger.error(f"❌ Webhook error: {str(e)}", exc_info=True)
-        
-        # Return user-friendly error
         return {
             "response": "An error occurred. Please try again with a simpler topic.",
             "success": False
@@ -444,18 +362,14 @@ generate seo titles for: sustainable fashion"""
 
 @app.post("/generate")
 async def generate_titles_api(request: GenerateRequest):
-    """Direct API endpoint for testing."""
-    
     try:
         titles = generate_seo_titles_sync(request.topic, request.keywords)
-        
         return AgentResponse(
             success=True,
             titles=titles,
             message=f"Generated {len(titles)} titles",
             timestamp=datetime.now(timezone.utc).isoformat()
         )
-        
     except Exception as e:
         logger.error(f"Generate API error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -463,10 +377,8 @@ async def generate_titles_api(request: GenerateRequest):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
-    host = "0.0.0.0"  # Must be 0.0.0.0 for Railway
-    
+    host = "0.0.0.0"
     logger.info(f"🚀 Starting SEO Title Generator on {host}:{port}")
     logger.info(f"📊 Mode: {'TEST' if TEST_MODE else ('FAST' if USE_FAST_MODE else 'AI')}")
     logger.info(f"🤖 AI: {'Disabled' if DISABLE_AI else ('Connected' if model else 'No API Key')}")
-    
     uvicorn.run(app, host=host, port=port)
