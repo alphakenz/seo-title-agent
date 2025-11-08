@@ -218,14 +218,14 @@ Rules:
 def format_titles_for_telex(titles: List[SEOTitle]) -> str:
     """Format titles for Telex chat display."""
     
-    message = "✨ **Your 10 SEO-Optimized Titles:**\n\n"
+    message = "**Your 10 SEO-Optimized Titles:**\n\n"
     
     for i, title in enumerate(titles, 1):
         message += f"**{i}. {title.title}**\n"
-        message += f"📝 {title.description}\n"
-        message += f"🏷️ {', '.join(title.keywords)} • {title.character_count} chars\n\n"
+        message += f"Description: {title.description}\n"
+        message += f"Keywords: {', '.join(title.keywords)} | Length: {title.character_count} chars\n\n"
     
-    message += "💡 **Quick Tips:** Use numbers, power words, and keep under 60 chars for best CTR!"
+    message += "**Quick Tips:** Use numbers, power words, and keep under 60 chars for best CTR!"
     
     return message
 
@@ -320,6 +320,17 @@ async def test_webhook():
         "success": True
     }
 
+@app.get("/webhook")
+async def webhook_get():
+    """GET endpoint for webhook - for browser testing."""
+    return {
+        "status": "ready",
+        "message": "✅ Webhook is active! Use POST method to send messages.",
+        "agent": "SEO Title Generator",
+        "test_command": "POST with: {'text': 'generate seo titles for: your topic'}",
+        "version": "1.0.0"
+    }
+
 @app.post("/webhook")
 async def telex_webhook(request: Request):
     """Main webhook endpoint for Telex.im integration."""
@@ -339,7 +350,7 @@ async def telex_webhook(request: Request):
         # TEST MODE - return immediately
         if TEST_MODE:
             test_response = {
-                "response": f"🧪 **TEST MODE**\n\nReceived: '{message_content}'\n\nWebhook is working! Disable TEST_MODE to generate real titles.",
+                "response": f"**TEST MODE**\n\nReceived: '{message_content}'\n\nWebhook is working! Disable TEST_MODE to generate real titles.",
                 "success": True
             }
             logger.info("Returning TEST response")
@@ -348,22 +359,22 @@ async def telex_webhook(request: Request):
         # Handle empty messages
         if not message_content:
             return {
-                "response": "👋 **SEO Title Generator**\n\nSay: `generate seo titles for: [your topic]`",
+                "response": "**SEO Title Generator**\n\nSay: generate seo titles for: [your topic]",
                 "success": True
             }
         
         # Help/info messages
         if message_content.lower() in ['help', 'info', 'how', '?', 'hello', 'hi']:
-            help_msg = """👋 **SEO Title Generator**
+            help_msg = """**SEO Title Generator**
 
-🎯 I create 10 SEO-optimized titles instantly!
+I create 10 SEO-optimized titles instantly!
 
 **How to use:**
-• `generate seo titles for: [topic]`
-• `seo: [topic]`
+- generate seo titles for: [topic]
+- seo: [topic]
 
 **Example:**
-`generate seo titles for: sustainable fashion`"""
+generate seo titles for: sustainable fashion"""
             
             return {
                 "response": help_msg,
@@ -392,11 +403,11 @@ async def telex_webhook(request: Request):
         # Validate topic
         if not topic or len(topic) < 2:
             return {
-                "response": "❌ Please provide a topic!\n\nExample: `generate seo titles for: AI trends`",
+                "response": "Please provide a topic!\n\nExample: generate seo titles for: AI trends",
                 "success": True
             }
         
-        logger.info(f"🎯 Generating for topic: {topic}")
+        logger.info(f"Generating for topic: {topic}")
         
         # Generate titles with timeout
         timeout_duration = 4.0 if USE_FAST_MODE else 7.0
@@ -427,7 +438,7 @@ async def telex_webhook(request: Request):
         
         # Return user-friendly error
         return {
-            "response": "❌ An error occurred. Please try again with a simpler topic.",
+            "response": "An error occurred. Please try again with a simpler topic.",
             "success": False
         }
 
