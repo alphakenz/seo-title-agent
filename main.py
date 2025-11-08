@@ -290,46 +290,49 @@ async def telex_webhook(request: Request):
     start_time = datetime.now(timezone.utc)
     try:
         body = await request.json()
+        rpc_id = body.get("id") or body.get("requestId") or "1"  # fallback
+
         message_content = extract_message_from_telex(body)
 
-        if TEST_MODE:
-            formatted_message = f"**TEST MODE**\n\nReceived: '{message_content}'"
-        else:
-            if not message_content:
-                message_content = "Please provide a topic!\nExample: generate seo titles for: AI trends"
-            # Remove command prefixes
-            prefixes = ['generate seo titles for:', 'seo titles for:', 'seo:', 'generate:', 'create:']
-            topic_lower = message_content.lower()
-            for prefix in prefixes:
-                if topic_lower.startswith(prefix):
-                    message_content = message_content[len(prefix):].strip()
-                    break
-            formatted_message = format_titles_for_telex(await asyncio.to_thread(generate_seo_titles_sync, message_content))
+        if not message_content:
+            message_content = "Please provide a topic!\nExample: generate seo titles for: AI trends"
 
-        response_payload = {
-            "success": True,
-            "message": {
-                "kind": "message",
-                "parts": [
-                    {"kind": "text", "text": formatted_message}
-                ]
+        prefixes = ['generate seo titles for:', 'seo titles for:', 'seo:', 'generate:', 'create:']
+        topic_lower = message_content.lower()
+        for prefix in prefixes:
+            if topic_lower.startswith(prefix):
+                message_content = message_content[len(prefix):].strip()
+                break
+
+        titles = await asyncio.to_thread(generate_seo_titles_sync, message_content)
+        formatted_message = format_titles_for_telex(titles)
+
+        return {
+            "jsonrpc": "2.0",
+            "id": rpc_id,
+            "result": {
+                "success": True,
+                "message": {
+                    "kind": "message",
+                    "parts": [
+                        {"kind": "text", "text": formatted_message}
+                    ]
+                }
             }
         }
-        duration = (datetime.now(timezone.utc) - start_time).total_seconds()
-        logger.info(f"✅ Response ready in {duration:.2f}s")
-        return response_payload
 
     except Exception as e:
         logger.error(f"❌ Webhook error: {str(e)}", exc_info=True)
         return {
-            "success": False,
-            "message": {
-                "kind": "message",
-                "parts": [
-                    {"kind": "text", "text": "An error occurred. Please try again with a simpler topic."}
-                ]
+            "jsonrpc": "2.0",
+            "id": rpc_id if 'rpc_id' in locals() else "1",
+            "error": {
+                "code": -32000,
+                "message": "Internal server error",
+                "data": str(e)
             }
         }
+
 
 # Direct API for testing
 @app.post("/generate")
