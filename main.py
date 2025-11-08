@@ -292,22 +292,23 @@ async def telex_webhook(request: Request):
             "id": rpc_id,
             "result": {
                 "id": str(uuid.uuid4()),
-                "contextId": conversation_id,
+                "contextId": "",
                 "status": {
                     "state": "completed",
                     "timestamp": datetime.utcnow().isoformat() + "Z",
                     "message": {
                         "messageId": str(uuid.uuid4()),
-                        "role": "seo_title_generator",
-                        "parts": [
+                        "role": "agent",          # ✅ Must be "agent"
+                        "kind": "message",        # ✅ Must be "message"
+                        "parts": [                # ✅ Array of content
                             {"kind": "text", "text": formatted_message}
-                        ],
-                        "kind": "message"
+                        ]
                     }
                 },
                 "kind": "task"
             }
-        }
+}
+
 
     except Exception as e:
         logger.error(f"❌ Webhook error: {str(e)}", exc_info=True)
